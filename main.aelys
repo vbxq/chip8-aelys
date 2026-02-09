@@ -1,0 +1,98 @@
+needs std.io
+needs std.fs as fs
+needs std.bytes as bytes
+needs std.time
+needs chip8
+needs opengl as gl
+
+let SCALE = 10
+let WINDOW_W = 64 * SCALE
+let WINDOW_H = 32 * SCALE
+let CYCLES_PER_FRAME = 10
+let ROM_PATH = "rom.ch8"
+
+fn load_rom(path) {
+    if not fs.exists(path) {
+        print("err: ROM file not found: {path}")
+        return 0
+    }
+
+    let rom_size = fs.size(path)
+    if rom_size == 0 {
+        print("err: ROM file is empty")
+        return 0
+    }
+
+    if rom_size > 3584 {
+        print("err: ROM too large ({rom_size} bytes, max 3584)")
+        return 0
+    }
+
+    let f = fs.open(path, "r")
+    let rom_data = fs.read_bytes(f, rom_size)
+    fs.close(f)
+
+    for i in 0..rom_size {
+        chip8.memory[0x200 + i] = bytes.read_u8(rom_data, i)
+    }
+
+    print("[*] LOADED: {path} ({rom_size} bytes)")
+    return rom_size
+}
+
+fn render() {
+    gl.clear()
+    for py in 0..32 {
+        for px in 0..64 {
+            if chip8.display[py * 64 + px] == 1 {
+                gl.fill_rect(px * SCALE, py * SCALE, SCALE, SCALE, 1.0, 1.0, 1.0)
+            }
+        }
+    }
+    gl.swap_buffers()
+}
+
+fn update_keys() {
+    for k in 0..16 {
+        chip8.keys[k] = gl.is_key_down(k)
+    }
+}
+
+chip8.init()
+
+let rom_loaded = load_rom(ROM_PATH)
+if rom_loaded == 0 {
+    print("err: failed to load ROM.")
+} else {
+    gl.init_with_size(WINDOW_W, WINDOW_H)
+    gl.set_title("CHIP-8 Emulator")
+    gl.clear_color(0.0, 0.0, 0.0, 1.0)
+
+    let frame_timer = time.timer()
+    let frame_duration = 16 // 60fps (16.67ms per frame)
+
+    while gl.is_open() {
+        update_keys()
+
+        // execute cpu cycles, dispatch loop
+        for c in 0..CYCLES_PER_FRAME {
+            chip8.cycle()
+        }
+
+        chip8.tick_timers()
+
+        if chip8.should_draw() {
+            render()
+        } else {
+            gl.swap_buffers()
+        }
+
+        let elapsed = time.elapsed_ms(frame_timer)
+        if elapsed < frame_duration {
+            time.sleep(frame_duration - elapsed)
+        }
+        time.reset(frame_timer)
+    }
+
+    gl.close()
+}
