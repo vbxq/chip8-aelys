@@ -1,8 +1,0 @@
-[module.opengl]
-kind = "native"
-path = "opengl.dll"
-capabilities = ["gpu", "window"]
-required_version = ">=0.1.0"
-
-[build]
-bundle_native_modules = true
