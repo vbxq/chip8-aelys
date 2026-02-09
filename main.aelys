@@ -2,6 +2,7 @@ needs std.io
 needs std.fs as fs
 needs std.bytes as bytes
 needs std.time
+needs std.sys as sys
 needs chip8
 needs opengl as gl
 
@@ -9,7 +10,7 @@ let SCALE = 10
 let WINDOW_W = 64 * SCALE
 let WINDOW_H = 32 * SCALE
 let CYCLES_PER_FRAME = 10
-let ROM_PATH = "rom.ch8"
+let ROM_PATH = fs.join(sys.script_dir(), "rom.ch8")
 
 fn load_rom(path) {
     if not fs.exists(path) {
@@ -40,6 +41,7 @@ fn load_rom(path) {
     return rom_size
 }
 
+@no_gc
 fn render() {
     gl.clear()
     for py in 0..32 {
@@ -52,6 +54,7 @@ fn render() {
     gl.swap_buffers()
 }
 
+@no_gc
 fn update_keys() {
     for k in 0..16 {
         chip8.keys[k] = gl.is_key_down(k)

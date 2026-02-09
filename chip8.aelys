@@ -29,6 +29,7 @@ pub fn init() {
     font.load_font(memory)
 }
 
+@no_gc
 pub fn should_draw() {
     if draw_flag {
         draw_flag = false
@@ -41,6 +42,7 @@ pub fn is_waiting() {
     return waiting_for_key
 }
 
+@no_gc
 pub fn tick_timers() {
     if delay_timer > 0 {
         delay_timer = delay_timer - 1
