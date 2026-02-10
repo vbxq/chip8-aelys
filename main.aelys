@@ -1,24 +1,28 @@
 needs std.io
-needs std.fs as fs
+needs std.fs
 needs std.bytes as bytes
 needs std.time
-needs std.sys as sys
+needs std.sys
 needs chip8
 needs opengl as gl
 
-let SCALE = 10
+let SCALE = 20
 let WINDOW_W = 64 * SCALE
 let WINDOW_H = 32 * SCALE
 let CYCLES_PER_FRAME = 10
-let ROM_PATH = fs.join(sys.script_dir(), "rom.ch8")
+let mut ROM_PATH = join(sys.script_dir(), "rom.ch8")
+
+if sys.arg_count() > 0 {
+    ROM_PATH = sys.arg(0)
+}
 
 fn load_rom(path) {
-    if not fs.exists(path) {
+    if not exists(path) {
         print("err: ROM file not found: {path}")
         return 0
     }
 
-    let rom_size = fs.size(path)
+    let rom_size = size(path)
     if rom_size == 0 {
         print("err: ROM file is empty")
         return 0
@@ -29,9 +33,9 @@ fn load_rom(path) {
         return 0
     }
 
-    let f = fs.open(path, "r")
-    let rom_data = fs.read_bytes(f, rom_size)
-    fs.close(f)
+    let f = open(path, "r")
+    let rom_data = read_bytes(f, rom_size)
+    close(f)
 
     for i in 0..rom_size {
         chip8.memory[0x200 + i] = bytes.read_u8(rom_data, i)
