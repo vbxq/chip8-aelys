@@ -1,0 +1,35 @@
+use chip8
+use std::fs
+use std::sys
+
+let path = "{sys::script_dir().unwrap_or(".")}/tests/opcodes.csv"
+let data = fs::read_text(path).unwrap()
+let mut cpu = chip8::new()
+let mut count = 0
+for line in data.split("\n") {
+    if line == "" { continue }
+    let mut row: Vec<int> = vec![]
+    for field in line.split(",") { row.push(field.to_int().unwrap()) }
+    if row.len() != 86 { panic("invalid opcode fixture row {count}") }
+    cpu.load_rom(vec![row[0] as u8, row[1] as u8]).unwrap()
+    cpu.i = 768
+    cpu.delay_timer = 20
+    cpu.sound_timer = 30
+    for j in 0..16 {
+        cpu.v[j] = row[2 + j]
+        cpu.memory[768 + j] = row[18 + j] as u8
+        cpu.keys[j] = row[34 + j] != 0
+    }
+    cpu.cycle().unwrap()
+    for j in 0..16 {
+        if cpu.v[j] != row[50 + j] || (cpu.memory[768 + j] as int) != row[66 + j] {
+            panic("oracle case {count}: register/memory mismatch")
+        }
+    }
+    if cpu.pc != row[82] || cpu.i != row[83] || cpu.delay_timer != row[84] || cpu.sound_timer != row[85] {
+        panic("oracle case {count}: state mismatch")
+    }
+    count += 1
+}
+if count != 300 { panic("expected 300 opcode cases, got {count}") }
+println("PASS: 300 independent opcode oracle cases")
