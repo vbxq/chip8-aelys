@@ -1,0 +1,126 @@
+extern "SDL2" {
+    fn SDL_Init(flags: u32) -> i32
+    fn SDL_InitSubSystem(flags: u32) -> i32
+    fn SDL_GetError() -> cstr
+    fn SDL_SetHint(name: cstr, value: cstr) -> bool
+    fn SDL_CreateWindow(title: cstr, x: i32, y: i32, w: i32, h: i32, flags: u32) -> ptr
+    fn SDL_CreateRenderer(window: ptr, index: i32, flags: u32) -> ptr
+    fn SDL_CreateTexture(renderer: ptr, format: u32, access: i32, w: i32, h: i32) -> ptr
+    fn SDL_UpdateTexture(texture: ptr, rect: ptr, pixels: &[u8], pitch: i32) -> i32
+    fn SDL_RenderClear(renderer: ptr) -> i32
+    fn SDL_RenderCopy(renderer: ptr, texture: ptr, src: ptr, dst: ptr) -> i32
+    fn SDL_RenderPresent(renderer: ptr)
+    fn SDL_PollEvent(event: &mut [u8]) -> i32
+    fn SDL_OpenAudioDevice(name: ptr, capture: i32, desired: &[u8], obtained: &mut [u8], changes: i32) -> u32
+    fn SDL_PauseAudioDevice(device: u32, pause: i32)
+    fn SDL_QueueAudio(device: u32, data: &[u8], length: u32) -> i32
+    fn SDL_GetQueuedAudioSize(device: u32) -> u32
+    fn SDL_ClearQueuedAudio(device: u32)
+    fn SDL_CloseAudioDevice(device: u32)
+    fn SDL_DestroyTexture(texture: ptr)
+    fn SDL_DestroyRenderer(renderer: ptr)
+    fn SDL_DestroyWindow(window: ptr)
+    fn SDL_Quit()
+}
+
+let mut window = ptr::null()
+let mut renderer = ptr::null()
+let mut texture = ptr::null()
+let mut redraw = true
+let mut device: u32 = 0
+let mut event: Vec<u8> = vec![0; 64]
+let mut pixels: Vec<u8> = vec![255; 8192]
+let mut keymap: Vec<int> = vec![27, 30, 31, 32, 20, 26, 8, 4, 22, 7, 29, 6, 33, 21, 9, 25]
+let mut key_state: Vec<bool> = vec![false; 16]
+let mut tone: Vec<u8> = vec![]
+
+fn error(what: string) -> string { "{what}: {SDL_GetError()}" }
+
+pub fn open(scale: int, audio: bool) -> Result<(), string> {
+    if SDL_Init(0x20) != 0 { return Err(error("SDL_Init")) }
+    SDL_SetHint("SDL_RENDER_SCALE_QUALITY", "0")
+    SDL_SetHint("SDL_FRAMEBUFFER_ACCELERATION", "0")
+    window = SDL_CreateWindow("Elyra CHIP-8", 0x2FFF0000, 0x2FFF0000, 64 * scale, 32 * scale, 0)
+    if window.is_null() { return Err(error("SDL_CreateWindow")) }
+    renderer = SDL_CreateRenderer(window, -1, 1)
+    if renderer.is_null() { return Err(error("SDL_CreateRenderer")) }
+    texture = SDL_CreateTexture(renderer, 0x16362004, 1, 64, 32)
+    if texture.is_null() { return Err(error("SDL_CreateTexture")) }
+    for k in 0..16 { key_state[k] = false }
+    redraw = true
+    if audio {
+        if SDL_InitSubSystem(0x10) != 0 { return Err(error("SDL audio init (use --mute to disable)")) }
+        let mut spec: Vec<u8> = vec![0; 32]
+        let mut obtained: Vec<u8> = vec![0; 32]
+        spec.write_i32_le(0, 22050)
+        spec.write_u16_le(4, 8)
+        spec[6] = 1
+        spec.write_u16_le(8, 256)
+        device = SDL_OpenAudioDevice(ptr::null(), 0, &spec, &mut obtained, 0)
+        if device == 0 { return Err(error("SDL_OpenAudioDevice (use --mute to disable)")) }
+        tone = vec![128; 2205]
+        for j in 0..tone.len() { tone[j] = if (j * 880 / 22050) % 2 == 0 { 152 } else { 104 } }
+        SDL_PauseAudioDevice(device, 0)
+    }
+    Ok(())
+}
+
+pub fn poll(mut keys: Vec<bool>) -> bool {
+    let mut quit = false
+    while SDL_PollEvent(&mut event) != 0 {
+        let kind = event.read_u32_le(0)
+        if kind == 0x100 { quit = true }
+        if kind == 0x300 || kind == 0x301 {
+            let code = event.read_i32_le(16)
+            if code == 41 && kind == 0x300 { quit = true }
+            for k in 0..16 {
+                if code == keymap[k] { key_state[k] = kind == 0x300 }
+            }
+        }
+        if kind == 0x200 && (event[12] == 3 || event[12] == 5) { redraw = true }
+        if kind == 0x200 && event[12] == 13 {
+            for k in 0..16 { key_state[k] = false }
+        }
+    }
+    for k in 0..16 { keys[k] = key_state[k] }
+    !quit
+}
+
+pub fn present(display: Vec<u8>) -> Result<(), string> {
+    for j in 0..2048 {
+        let value: u8 = if display[j] == 0 { 0 } else { 255 }
+        pixels[j * 4] = value
+        pixels[j * 4 + 1] = value
+        pixels[j * 4 + 2] = value
+    }
+    if SDL_UpdateTexture(texture, ptr::null(), &pixels, 256) != 0 { return Err(error("SDL_UpdateTexture")) }
+    if SDL_RenderClear(renderer) != 0 { return Err(error("SDL_RenderClear")) }
+    if SDL_RenderCopy(renderer, texture, ptr::null(), ptr::null()) != 0 { return Err(error("SDL_RenderCopy")) }
+    SDL_RenderPresent(renderer)
+    redraw = false
+    Ok(())
+}
+
+pub fn beep(active: bool) -> Result<(), string> {
+    if device == 0 { return Ok(()) }
+    if !active { SDL_ClearQueuedAudio(device); return Ok(()) }
+    if SDL_GetQueuedAudioSize(device) < 441 {
+        if SDL_QueueAudio(device, &tone, tone.len() as u32) != 0 { return Err(error("SDL_QueueAudio")) }
+    }
+    Ok(())
+}
+
+pub fn needs_redraw() -> bool { redraw }
+
+pub fn queued_audio() -> int { SDL_GetQueuedAudioSize(device) as int }
+
+pub fn close() {
+    if device != 0 { SDL_CloseAudioDevice(device); device = 0 }
+    SDL_DestroyTexture(texture)
+    SDL_DestroyRenderer(renderer)
+    SDL_DestroyWindow(window)
+    texture = ptr::null()
+    renderer = ptr::null()
+    window = ptr::null()
+    SDL_Quit()
+}

@@ -1,0 +1,57 @@
+use screen
+extern "SDL2" {
+    fn SDL_PushEvent(event: &[u8]) -> i32
+    fn SDL_GetWindowFromID(id: u32) -> ptr
+    fn SDL_GetWindowTitle(window: ptr) -> cstr
+    fn SDL_GetRenderer(window: ptr) -> ptr
+    fn SDL_RenderReadPixels(renderer: ptr, rect: ptr, format: u32, pixels: &mut [u8], pitch: i32) -> i32
+}
+fn check(ok: bool, name: string) { if !ok { panic("SDL check failed: {name}") } }
+screen::open(1, true).unwrap()
+let mut display: Vec<u8> = vec![0; 2048]
+display[0] = 1
+display[2047] = 1
+check(screen::needs_redraw(), "initial redraw")
+screen::present(display).unwrap()
+check(!screen::needs_redraw(), "redraw consumed")
+let mut window = ptr::null()
+for id in 1..64 {
+    let candidate = SDL_GetWindowFromID(id as u32)
+    if !candidate.is_null() {
+        if SDL_GetWindowTitle(candidate) == "Elyra CHIP-8" { window = candidate }
+    }
+}
+check(!window.is_null(), "window exists")
+let mut pixels: Vec<u8> = vec![0; 8192]
+check(SDL_RenderReadPixels(SDL_GetRenderer(window), ptr::null(), 0x16362004, &mut pixels, 256) == 0, "renderer readback")
+for j in 0..2048 {
+    let value: u8 = if j == 0 || j == 2047 { 255 } else { 0 }
+    check(pixels[j * 4] == value && pixels[j * 4 + 1] == value && pixels[j * 4 + 2] == value, "actual rendered pixel")
+}
+let mut keys: Vec<bool> = vec![false; 16]
+let mapping: Vec<int> = vec![27, 30, 31, 32, 20, 26, 8, 4, 22, 7, 29, 6, 33, 21, 9, 25]
+let mut event: Vec<u8> = vec![0; 64]
+for k in 0..16 {
+    event.write_u32_le(0, 0x300)
+    event.write_i32_le(16, mapping[k])
+    check(SDL_PushEvent(&event) == 1 && screen::poll(keys) && keys[k], "key down")
+    event.write_u32_le(0, 0x301)
+    check(SDL_PushEvent(&event) == 1 && screen::poll(keys) && !keys[k], "key up")
+}
+event.write_u32_le(0, 0x300)
+event.write_i32_le(16, 20)
+check(SDL_PushEvent(&event) == 1 && screen::poll(keys) && keys[4], "focus test key")
+event.write_u32_le(0, 0x200)
+event[12] = 13
+check(SDL_PushEvent(&event) == 1 && screen::poll(keys) && !keys[4], "focus loss releases keys")
+event.write_u32_le(0, 0x200)
+event[12] = 3
+check(SDL_PushEvent(&event) == 1 && screen::poll(keys) && screen::needs_redraw(), "exposed window redraw")
+screen::beep(true).unwrap()
+check(screen::queued_audio() > 0, "PCM queued on audio device")
+screen::beep(false).unwrap()
+check(screen::queued_audio() == 0, "sound timer silence")
+event.write_u32_le(0, 0x100)
+check(SDL_PushEvent(&event) == 1 && !screen::poll(keys), "quit event")
+screen::close()
+println("PASS: SDL renderer pixels, 16 keypad keys, focus loss, queued audio and quit")

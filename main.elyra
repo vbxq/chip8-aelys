@@ -1,0 +1,120 @@
+use std::fs
+use std::sys
+use std::time
+use chip8
+use screen
+
+fn fail(message: string) -> unit {
+    println("error: {message}")
+    sys::exit(1)
+}
+
+fn number(text: string, name: string, low: int, high: int) -> int {
+    let value = text.to_int().unwrap_or(-1)
+    if value < low || value > high { fail("{name} must be between {low} and {high}") }
+    value
+}
+
+fn read_rom(path: string) -> Result<Vec<u8>, string> {
+    let handle = fs::open(path, "r")?
+    let data = fs::read_chunk(handle, 3585)
+    fs::close(handle)?
+    data
+}
+
+fn save_display(path: string, display: Vec<u8>) -> Result<(), string> {
+    let mut image = "P5\n64 32\n255\n".to_bytes()
+    for j in 0..2048 { image.push(if display[j] == 0 { 0 } else { 255 }) }
+    fs::write_bytes(path, &image)
+}
+
+let mut path = "{sys::script_dir().unwrap_or(".")}/rom.ch8"
+let mut chosen = false
+let mut scale = 12
+let mut hz = 600
+let mut frame_limit = 0
+let mut cycle_limit = 600
+let mut headless = false
+let mut audio = true
+let mut snapshot = ""
+let mut index = 0
+while index < sys::arg_count() {
+    let arg = sys::arg(index).unwrap()
+    if arg == "--usage" || arg == "--help" || arg == "-h" {
+        println("Usage: elyra main.elyra [ROM] [--scale 1..40] [--hz 1..100000] [--mute]")
+        println("       [--frames N] [--headless --cycles N] [--screenshot image.pgm]")
+        println("Keypad: 1234/QWER/ASDF/ZXCV. Escape quits. Timers run at 60 Hz.")
+        sys::exit(0)
+    } else if arg == "--headless" { headless = true }
+    else if arg == "--mute" { audio = false }
+    else if arg == "--scale" || arg == "--hz" || arg == "--frames" || arg == "--cycles" || arg == "--screenshot" {
+        index += 1
+        if index >= sys::arg_count() { fail("missing value after {arg}") }
+        let value = sys::arg(index).unwrap()
+        if arg == "--scale" { scale = number(value, arg, 1, 40) }
+        else if arg == "--hz" { hz = number(value, arg, 1, 100000) }
+        else if arg == "--frames" { frame_limit = number(value, arg, 1, 10000000) }
+        else if arg == "--cycles" { cycle_limit = number(value, arg, 1, 100000000) }
+        else { snapshot = value }
+    } else {
+        if arg.starts_with("-") || chosen { fail("unknown argument: {arg}") }
+        path = arg
+        chosen = true
+    }
+    index += 1
+}
+let rom = match read_rom(path) { Ok(data) => data, Err(message) => { println("error: {message}"); sys::exit(1) } }
+let mut cpu = chip8::new()
+match cpu.load_rom(rom) { Ok(_) => (), Err(message) => fail(message) }
+println("Loaded {path} ({rom.len()} bytes), CPU {hz} Hz")
+let mut cycles = 0
+let mut frames = 0
+if headless {
+    let mut ticks = 0
+    while cycles < cycle_limit {
+        match cpu.cycle() { Ok(_) => (), Err(message) => fail(message) }
+        cycles += 1
+        ticks += 60
+        while ticks >= hz { cpu.tick_timers(); ticks -= hz }
+    }
+} else {
+    match screen::open(scale, audio) { Ok(_) => (), Err(message) => { screen::close(); fail(message) } }
+    let timer = time::timer()
+    let mut previous = time::elapsed_us(timer)
+    let mut cpu_credit = 0
+    let mut timer_credit = 0
+    let mut frame_credit = 1000000
+    let mut running = true
+    while running && (frame_limit == 0 || frames < frame_limit) {
+        running = screen::poll(cpu.keys)
+        let now = time::elapsed_us(timer)
+        let mut elapsed = now - previous
+        previous = now
+        if elapsed > 100000 { elapsed = 100000 }
+        cpu_credit += elapsed * hz
+        timer_credit += elapsed * 60
+        frame_credit += elapsed * 60
+        while running && cpu_credit >= 1000000 {
+            match cpu.cycle() { Ok(_) => (), Err(message) => { screen::close(); fail(message) } }
+            cpu_credit -= 1000000
+            cycles += 1
+        }
+        while timer_credit >= 1000000 { cpu.tick_timers(); timer_credit -= 1000000 }
+        match screen::beep(cpu.sound_timer > 0) { Ok(_) => (), Err(message) => { screen::close(); fail(message) } }
+        if frame_credit >= 1000000 {
+            if cpu.take_draw() || screen::needs_redraw() {
+                match screen::present(cpu.display) { Ok(_) => (), Err(message) => { screen::close(); fail(message) } }
+            }
+            frame_credit %= 1000000
+            frames += 1
+        }
+        time::sleep_us(1000)
+    }
+    screen::close()
+}
+if snapshot != "" {
+    match save_display(snapshot, cpu.display) { Ok(_) => (), Err(message) => fail(message) }
+}
+let mut lit = 0
+for pixel in cpu.display { if pixel != 0 { lit += 1 } }
+println("Stopped: cycles {cycles}, frames {frames}, pc {cpu.pc}, lit {lit}")

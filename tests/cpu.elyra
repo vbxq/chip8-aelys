@@ -1,0 +1,94 @@
+use chip8
+use chip8::{Chip8}
+
+fn check(ok: bool, name: string) {
+    if !ok { panic("CPU check failed: {name}") }
+}
+fn step(mut cpu: Chip8, opcode: int) {
+    cpu.memory[cpu.pc] = (opcode >> 8) as u8
+    cpu.memory[cpu.pc + 1] = (opcode & 255) as u8
+    cpu.cycle().unwrap()
+}
+let mut cpu = chip8::new()
+check(cpu.memory.len() == 4096 && cpu.pc == 512, "reset")
+check(cpu.memory[0] == 240 && cpu.memory[79] == 128, "font")
+step(cpu, 0x60FE)
+step(cpu, 0x7005)
+check(cpu.v[0] == 3, "8-bit wrap")
+cpu.v[1] = 255
+cpu.v[2] = 1
+step(cpu, 0x8124)
+check(cpu.v[1] == 0 && cpu.v[15] == 1, "carry")
+step(cpu, 0x8125)
+check(cpu.v[1] == 255 && cpu.v[15] == 0, "borrow")
+step(cpu, 0x8126)
+check(cpu.v[1] == 127 && cpu.v[15] == 1, "shift VX")
+step(cpu, 0x812E)
+check(cpu.v[1] == 254 && cpu.v[15] == 0, "shift left")
+cpu.i = 0x300
+cpu.v[1] = 234
+step(cpu, 0xF133)
+check(cpu.memory[0x300] == 2 && cpu.memory[0x301] == 3 && cpu.memory[0x302] == 4, "BCD")
+step(cpu, 0xF155)
+cpu.v[0] = 0
+cpu.v[1] = 0
+step(cpu, 0xF165)
+check(cpu.v[0] == 3 && cpu.v[1] == 234 && cpu.i == 0x300, "register transfer keeps I")
+cpu.v[0] = 63
+cpu.v[1] = 31
+cpu.memory[0x300] = 255
+step(cpu, 0xD011)
+check(cpu.display[2047] == 1 && cpu.display[0] == 0, "sprite clipping")
+step(cpu, 0xD011)
+check(cpu.display[2047] == 0 && cpu.v[15] == 1, "XOR collision")
+step(cpu, 0x00E0)
+check(cpu.take_draw() && !cpu.take_draw(), "draw flag")
+step(cpu, 0xF20A)
+let held_pc = cpu.pc
+cpu.cycle().unwrap()
+check(cpu.waiting && cpu.pc == held_pc, "key wait")
+cpu.keys[10] = true
+cpu.cycle().unwrap()
+check(!cpu.waiting && cpu.v[2] == 10, "key input")
+step(cpu, 0xF215)
+step(cpu, 0xF218)
+cpu.tick_timers()
+check(cpu.delay_timer == 9 && cpu.sound_timer == 9, "60 Hz timers")
+let return_pc = cpu.pc + 2
+step(cpu, 0x2300)
+check(cpu.pc == 0x300 && cpu.sp == 1, "call")
+step(cpu, 0x00EE)
+check(cpu.pc == return_pc && cpu.sp == 0, "return")
+check(cpu.cycle().is_ok(), "valid next instruction")
+cpu.pc = 0xFFE
+step(cpu, 0x60AB)
+check(cpu.v[0] == 171, "last fetchable address")
+check(cpu.cycle().is_err(), "fetch bounds")
+cpu.pc = 512
+check({ cpu.memory[512] = 0; cpu.memory[513] = 238; cpu.cycle().is_err() }, "stack underflow")
+cpu.i = 4095
+cpu.pc = 512
+cpu.memory[512] = 241
+cpu.memory[513] = 51
+check(cpu.cycle().is_err(), "BCD bounds")
+cpu.pc = 512
+cpu.sp = 16
+cpu.memory[512] = 0x22
+cpu.memory[513] = 0x00
+check(cpu.cycle().is_err(), "stack overflow")
+cpu.pc = 512
+cpu.memory[512] = 0x50
+cpu.memory[513] = 0x01
+check(cpu.cycle().is_err(), "invalid opcode")
+cpu.pc = 512
+cpu.i = 4095
+cpu.memory[512] = 0xD0
+cpu.memory[513] = 0x12
+check(cpu.cycle().is_err(), "sprite bounds")
+check(cpu.load_rom(vec![]).is_err(), "empty ROM")
+check(cpu.load_rom(vec![0; 3585]).is_err(), "oversized ROM")
+cpu.load_rom(vec![0x60, 0x42]).unwrap()
+check(cpu.pc == 512 && cpu.sp == 0 && cpu.v[0] == 0 && cpu.memory[0x300] == 0, "clean reload")
+cpu.cycle().unwrap()
+check(cpu.v[0] == 66, "ROM execution")
+println("PASS: CPU arithmetic, sprites, keys, timers, stack, bounds and ROM reload")
